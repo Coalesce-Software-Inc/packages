@@ -22,7 +22,9 @@ locations:
     locationName: SRC_TPCH
 macros: {}
 packages: {}
-projects: {}
+projects:
+  "1":
+    name: COALESCE-PACKAGES
 stepTypes:
   StepType-Dimension:
     id: Dimension
