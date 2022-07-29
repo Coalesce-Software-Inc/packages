@@ -7,10 +7,19 @@ environments:
     description: ""
     devEnv: true
     id: 1
-    mappings: {}
+    mappings:
+      "1":
+        database: SNOWFLAKE_SAMPLE_DATA
+        id: 1
+        locationName: SRC_TPCH
+        schema: TPCH_SF1
     name: DEV
 jobs: {}
-locations: {}
+locations:
+  SRC_TPCH:
+    default: true
+    id: 1
+    locationName: SRC_TPCH
 macros: {}
 packages: {}
 projects: {}
