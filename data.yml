@@ -24,7 +24,7 @@ macros: {}
 packages: {}
 projects:
   "1":
-    name: COALESCE-PACKAGES
+    name: COALESCE-DATA_VAULT
 stepTypes:
   StepType-1:
     id: "1"
