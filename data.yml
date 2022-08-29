@@ -5,7 +5,9 @@ locations:
     mappingDefinitions: {}
 macros: {}
 packages: {}
-projects: {}
+projects:
+  "1":
+    name: COALESCE-DATA_VAULT
 stepTypes:
   StepType-1:
     id: "1"
@@ -827,6 +829,7 @@ stepTypes:
     id: Dimension
     isDisabled: false
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |-
         capitalized: Dimension
@@ -1273,6 +1276,7 @@ stepTypes:
     id: Fact
     isDisabled: false
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |
         capitalized: Fact
@@ -1676,6 +1680,7 @@ stepTypes:
     id: Hub
     isDisabled: false
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |-
         capitalized: Hub
@@ -1921,6 +1926,7 @@ stepTypes:
     id: Link
     isDisabled: false
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |-
         capitalized: Link
@@ -2165,6 +2171,7 @@ stepTypes:
     id: Satellite
     isDisabled: false
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |-
         capitalized: Satellite
@@ -2411,6 +2418,7 @@ stepTypes:
     id: Source
     isDisabled: false
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |-
         capitalized: Source
@@ -2432,6 +2440,7 @@ stepTypes:
     id: Stage
     isDisabled: false
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |
         capitalized: Stage
@@ -2636,6 +2645,7 @@ stepTypes:
     id: View
     isDisabled: true
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |
         capitalized: View
@@ -2715,6 +2725,7 @@ stepTypes:
     id: persistentStage
     isDisabled: false
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |
         capitalized: Persistent Stage
