@@ -155,14 +155,7 @@ stepTypes:
             options:
             - table
 
-          - displayName: Insert Strategy
-            attributeName: insertStrategy
-            type: dropdownSelector
-            default: UNION
-            options:
-            - "UNION"
-            - "UNION ALL"
-            isRequired: true
+          - type: multisourceToggle
 
           - displayName: Link Hash Column
             type: columnSelector
@@ -787,19 +780,19 @@ stepTypes:
 
             CREATE OR REPLACE VIEW {{ ref_no_link(node.location.name, node.name) }}
             (
-                {% for col in columns %}
+                {% for col in sources[0].columns %}
                     "{{ col.name }}"
                     {%- if not loop.last -%}, {% endif %}
                     {%- if col.description | length > 0 %} COMMENT '{{ col.description }}'{% endif %}
                     
-                            {%- if col.isDateColumn  %} 
-                        {%- if order_by.order_by_text  | length >= 1 %}{% set order_by.order_by_text = order_by.order_by_text + ',' + col.name %}{% endif %} 
-                        {%- if order_by.order_by_text  | length == 0 %}{% set order_by.order_by_text = col.name %}{% endif %}
-                {% endif %} 
+                    {%- if col.isDateColumn  %} 
+                        {%- if order_by.order_by_text  | length >= 1 %}{% set order_by.order_by_text = order_by.order_by_text + ',' + '"' + col.sourceColumns[0].node.name + '"."' + col.name + '"' %}{% endif %} 
+                        {%- if order_by.order_by_text  | length == 0 %}{% set order_by.order_by_text =  '"' + col.sourceColumns[0].node.name + '"."' + col.name + '"' %}{% endif %}
+                    {% endif %} 
 
                 {%- if col.isSatKey  %} 
-                        {%- if partition_by.partition_by_text  | length >= 1 %}{% set partition_by.partition_by_text = partition_by.partition_by_text + ',' + col.name %}{% endif %} 
-                        {%- if partition_by.partition_by_text  | length == 0 %}{% set partition_by.partition_by_text = col.name %}{% endif %}
+                        {%- if partition_by.partition_by_text  | length >= 1 %}{% set partition_by.partition_by_text = partition_by.partition_by_text + ',' + '"' + col.sourceColumns[0].node.name + '"."' + col.name + '"' %}{% endif %} 
+                        {%- if partition_by.partition_by_text  | length == 0 %}{% set partition_by.partition_by_text = '"' + col.sourceColumns[0].node.name + '"."' + col.name + '"'  %}{% endif %}
                 {% endif %}  
 
 
@@ -815,10 +808,9 @@ stepTypes:
                 {% endfor %}
                 
                 {{ source.join }}
-                QUALIFY LEAD({{order_by.order_by_text}}) 
+                QUALIFY 1 = ROW_NUMBER() 
                         OVER (PARTITION BY {{partition_by.partition_by_text}} 
-                            ORDER BY {{order_by.order_by_text}} ASC) IS NULL
-
+                            ORDER BY {{order_by.order_by_text}} DESC)
 
             {% endfor %}
         run:
