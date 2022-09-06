@@ -774,28 +774,12 @@ stepTypes:
           templateString: |-
             {{ stage('Create View') }}
 
-            {% set order_by = namespace(order_by_txt='') %}
-            {% set partition_by = namespace(partition_by_txt='') %}
-
-
             CREATE OR REPLACE VIEW {{ ref_no_link(node.location.name, node.name) }}
             (
-                {% for col in sources[0].columns %}
+                {% for col in columns %}
                     "{{ col.name }}"
                     {%- if not loop.last -%}, {% endif %}
                     {%- if col.description | length > 0 %} COMMENT '{{ col.description }}'{% endif %}
-                    
-                    {%- if col.isDateColumn  %} 
-                        {%- if order_by.order_by_text  | length >= 1 %}{% set order_by.order_by_text = order_by.order_by_text + ',' + '"' + col.sourceColumns[0].node.name + '"."' + col.name + '"' %}{% endif %} 
-                        {%- if order_by.order_by_text  | length == 0 %}{% set order_by.order_by_text =  '"' + col.sourceColumns[0].node.name + '"."' + col.name + '"' %}{% endif %}
-                    {% endif %} 
-
-                {%- if col.isSatKey  %} 
-                        {%- if partition_by.partition_by_text  | length >= 1 %}{% set partition_by.partition_by_text = partition_by.partition_by_text + ',' + '"' + col.sourceColumns[0].node.name + '"."' + col.name + '"' %}{% endif %} 
-                        {%- if partition_by.partition_by_text  | length == 0 %}{% set partition_by.partition_by_text = '"' + col.sourceColumns[0].node.name + '"."' + col.name + '"'  %}{% endif %}
-                {% endif %}  
-
-
                 {% endfor %}
             )
             {%- if node.description | length > 0 %} COMMENT = '{{ node.description }}'{% endif %}
@@ -809,8 +793,18 @@ stepTypes:
                 
                 {{ source.join }}
                 QUALIFY 1 = ROW_NUMBER() 
-                        OVER (PARTITION BY {{partition_by.partition_by_text}} 
-                            ORDER BY {{order_by.order_by_text}} DESC)
+                        OVER (PARTITION BY 
+                            {% for col in source.columns if col.isSatKey %}
+                                {{ get_source_transform(col) }}
+                                {% if not loop.last %},{% endif %}
+                            {% endfor %}
+             
+                            ORDER BY 
+                            {% for col in source.columns if col.isDateColumn %}
+                                {{ get_source_transform(col) }}
+                                {% if not loop.last %},{% endif %}
+                            {% endfor %}
+                             DESC)
 
             {% endfor %}
         run:
