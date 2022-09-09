@@ -5,7 +5,9 @@ locations:
     mappingDefinitions: {}
 macros: {}
 packages: {}
-projects: {}
+projects:
+  "1":
+    name: COALESCE-MISC
 stepTypes:
   StepType-2:
     id: "2"
