@@ -9,6 +9,433 @@ projects:
   "1":
     name: COALESCE-MISC
 stepTypes:
+  StepType-10:
+    id: "10"
+    isDisabled: false
+    metadata:
+      defaultStorageLocation: null
+      error: null
+      nodeMetadataSpec: |-
+        capitalized: Node Profiler
+        short: PROF
+        tagColor: blue
+        plural: Node Profilers
+
+
+
+        config:
+        - groupName: Sampling Options
+          items:
+          - displayName: Sample Mode
+            attributeName: sampleMode
+            type: dropdownSelector
+            default: Sample
+            options:
+              - Sample
+              - Full Table
+           
+            isRequired: false
+          
+          - displayName: Percent or Fixed Number of Rows
+            attributeName: sampleOption
+            type: dropdownSelector
+            default: Fixed Row
+            options:
+              - Fixed Row
+              - Percentage
+            isRequired: false
+            enableIf: "{% if config.sampleMode == 'Sample' %} true {% else %} false {% endif %}"
+
+
+          - displayName: Number of Rows
+            attributeName: sampleRows
+            type: textBox
+            default: '1000'
+            isRequired: false
+            enableIf: "{% if config.sampleMode == 'Sample' and config.sampleOption == 'Fixed Row' %} true {% else %} false {% endif %}"
+          
+          - displayName: Percentage
+            attributeName: samplePercent
+            type: textBox
+            default: '10'
+            isRequired: false
+            enableIf: "{% if config.sampleMode == 'Sample' and config.sampleOption == 'Percentage' %} true {% else %} false {% endif %}"
+
+        - groupName: Distinct and Null
+          items:
+          - displayName: Distict Count
+            attributeName: isDistinctCount
+            type: columnSelector
+            isRequired: false
+          
+          - displayName: Null Count
+            attributeName: isNullCount
+            type: columnSelector
+            isRequired: false
+
+        - groupName: Min / Max / Avg
+          items:
+          - displayName: MAX Value
+            attributeName: isMaxMetric
+            type: columnSelector
+            isRequired: false
+
+          - displayName: MIN Value
+            attributeName: isMinMetric
+            type: columnSelector
+            isRequired: false
+          - displayName: Average Value
+            attributeName: isAvgMetric
+            type: columnSelector
+            isRequired: false
+
+
+        systemColumns:
+
+        - displayName: PROFILE_METRIC
+          transform: "NULL"
+          dataType: VARCHAR
+          placement: beginning
+          attributeName: isSystemUpdateDate
+
+        - displayName: SYSTEM_CREATE_DATE
+          transform: CAST(CURRENT_TIMESTAMP AS TIMESTAMP)
+          dataType: TIMESTAMP
+          placement: beginning
+          attributeName: isSystemCreateDate
+      templates:
+        create:
+          templateString: |-
+            {% if node.materializationType == 'table' %}
+                {{ stage('Create Profile Node Table') }}
+
+                CREATE OR REPLACE TABLE {{ ref_no_link(node.location.name, node.name) }}
+                (
+                    {% for col in columns %}
+                        "{{ col.name }}" VARCHAR 
+                        {%- if col.description | length > 0 %} COMMENT '{{ col.description }}'{% endif %}
+                        {%- if not loop.last -%}, {% endif %}
+                    {% endfor %}
+                )
+                {%- if node.description | length > 0 %} COMMENT = '{{ node.description }}'{% endif %}
+
+            {% endif %}
+        run:
+          templateString: |-
+            {% if columns | selectattr('isDistinctCount')| list | length > 0 %}
+                {{ stage('Profile Distinct') }}
+                
+                    MERGE INTO {{ ref_no_link(node.location.name, node.name) }} "TGT"
+                    USING (
+                        SELECT
+                        'DISTINCT' as "PROFILE_METRIC",
+                        {%- for col in sources[0].columns if not col.isSystemUpdateDate %}
+                            {% if col.isDistinctCount %}
+                                COUNT(DISTINCT "{{ col.name }}" )
+                            {% else %}
+                                {% if col.transform | trim != '' %}{{ col.transform }}{% else %}NULL{% endif %}
+                            {% endif %}
+                            AS "{{ col.name }}"
+                            {% if not loop.last %}, {% endif %}
+                        {% endfor %}
+
+                        {{ sources[0].join }} 
+                        {% if config.sampleMode == 'Sample' %} 
+                            sample (
+                            {% if config.sampleOption == 'Percentage' %} 
+                                {{ config.samplePercent }}
+                            {% else %}
+                                {{ config.sampleRows }} rows 
+                            {% endif %}
+                            )
+                        {% endif %}
+                        )
+                        AS "SRC"
+                    ON {% for col in sources[0].columns if col.isSystemUpdateDate or col.isSystemCreateDate -%}
+                            {% if not loop.first %}
+                                AND
+                            {% endif %}
+                            "SRC"."{{ col.name }}" = "TGT"."{{ col.name }}"
+                        {% endfor %}
+                    WHEN MATCHED
+                    THEN UPDATE SET
+                    {%- for col in sources[0].columns if not col.isSystemUpdateDate %}
+                            "TGT"."{{ col.name }}" = "SRC"."{{ col.name }}"
+                        {% if not loop.last %}, {% endif %}
+                    {% endfor %}
+                    WHEN NOT MATCHED THEN
+                    INSERT (
+                    {%- for col in columns %}
+                        "{{ col.name }}"
+                        {% if not loop.last %}, {% endif %}
+                    {% endfor -%}
+                    )
+                    VALUES (
+                    {%- for col in columns %}
+                        "SRC"."{{ col.name }}"
+                        {% if not loop.last %}, {% endif %}
+                    {% endfor -%}
+                    )
+
+            {% endif %}
+
+
+            {% if columns | selectattr('isNullCount')| list | length > 0 %}
+                {{ stage('Profile Null Values') }}
+                
+                    MERGE INTO {{ ref_no_link(node.location.name, node.name) }} "TGT"
+                    USING (
+                        SELECT
+                        'Null Count' as "PROFILE_METRIC",
+                        {%- for col in sources[0].columns if not col.isSystemUpdateDate %}
+                            {% if col.isNullCount %}
+                                SUM(CASE WHEN "{{ col.name }}" is NULL THEN 1 ELSE 0 END     )
+                            {% else %}
+                                {% if col.transform | trim != '' %}{{ col.transform }}{% else %}NULL{% endif %}
+                            {% endif %}
+                            AS "{{ col.name }}"
+                            {% if not loop.last %}, {% endif %}
+                        {% endfor %}
+
+                        {{ sources[0].join }} 
+                        {% if config.sampleMode == 'Sample' %} 
+                            sample (
+                            {% if config.sampleOption == 'Percentage' %} 
+                                {{ config.samplePercent }}
+                            {% else %}
+                                {{ config.sampleRows }} rows 
+                            {% endif %}
+                            )
+                        {% endif %}
+                    ) AS "SRC"
+                     ON {% for col in sources[0].columns if col.isSystemUpdateDate or col.isSystemCreateDate -%}
+                            {% if not loop.first %}
+                                AND
+                            {% endif %}
+                            "SRC"."{{ col.name }}" = "TGT"."{{ col.name }}"
+                        {% endfor %}
+                    WHEN MATCHED
+                    THEN UPDATE SET
+                    {%- for col in sources[0].columns if not col.isSystemUpdateDate %}
+                            "TGT"."{{ col.name }}" = "SRC"."{{ col.name }}"
+                        {% if not loop.last %}, {% endif %}
+                    {% endfor %}
+                    WHEN NOT MATCHED THEN
+                    INSERT (
+                    {%- for col in columns %}
+                        "{{ col.name }}"
+                        {% if not loop.last %}, {% endif %}
+                    {% endfor -%}
+                    )
+                    VALUES (
+                    {%- for col in columns %}
+                        "SRC"."{{ col.name }}"
+                        {% if not loop.last %}, {% endif %}
+                    {% endfor -%}
+                    )
+
+            {% endif %}
+
+
+            {% if columns | selectattr('isMaxMetric')| list | length > 0 %}
+                {{ stage('Profile Max') }}
+                
+                    MERGE INTO {{ ref_no_link(node.location.name, node.name) }} "TGT"
+                    USING (
+                        SELECT DISTINCT
+                        'MAX' as "PROFILE_METRIC",
+                        {%- for col in sources[0].columns if not col.isSystemUpdateDate %}
+                            {% if col.isMaxMetric %}
+                               (SELECT MAX("{{col.name}}") 
+                                {{ sources[0].join }} 
+                                {% if config.sampleMode == 'Sample' %} 
+                                    sample (
+                                    {% if config.sampleOption == 'Percentage' %} 
+                                        {{ config.samplePercent }}
+                                    {% else %}
+                                        {{ config.sampleRows }} rows 
+                                    {% endif %}
+                                    )
+                                {% endif %} ) 
+                            {% else %}
+                                {% if col.transform | trim != '' %}{{ col.transform }}{% else %}NULL{% endif %}
+                            {% endif %}
+                            AS "{{ col.name }}"
+                            {% if not loop.last %}, {% endif %}
+                        {% endfor %}
+
+                        {{ sources[0].join }} 
+                        {% if config.sampleMode == 'Sample' %} 
+                            sample (
+                            {% if config.sampleOption == 'Percentage' %} 
+                                {{ config.samplePercent }}
+                            {% else %}
+                                {{ config.sampleRows }} rows 
+                            {% endif %}
+                            )
+                        {% endif %} )
+                        AS "SRC"
+                    ON {% for col in sources[0].columns if col.isSystemUpdateDate or col.isSystemCreateDate -%}
+                            {% if not loop.first %}
+                                AND
+                            {% endif %}
+                            "SRC"."{{ col.name }}" = "TGT"."{{ col.name }}"
+                        {% endfor %}
+                    WHEN MATCHED
+                    THEN UPDATE SET
+                    {%- for col in sources[0].columns if not col.isSystemUpdateDate %}
+                            "TGT"."{{ col.name }}" = "SRC"."{{ col.name }}"
+                        {% if not loop.last %}, {% endif %}
+                    {% endfor %}
+                    WHEN NOT MATCHED THEN
+                    INSERT (
+                    {%- for col in columns %}
+                        "{{ col.name }}"
+                        {% if not loop.last %}, {% endif %}
+                    {% endfor -%}
+                    )
+                    VALUES (
+                    {%- for col in columns %}
+                        "SRC"."{{ col.name }}"
+                        {% if not loop.last %}, {% endif %}
+                    {% endfor -%}
+                    )
+
+            {% endif %}
+
+            {% if columns | selectattr('isMinMetric')| list | length > 0 %}
+                {{ stage('Profile Min') }}
+                
+                    MERGE INTO {{ ref_no_link(node.location.name, node.name) }} "TGT"
+                    USING (
+                        SELECT DISTINCT
+                        'MIN' as "PROFILE_METRIC",
+                        {%- for col in sources[0].columns if not col.isSystemUpdateDate %}
+                            {% if col.isMinMetric %}
+                               (SELECT MIN("{{col.name}}") 
+                               {{ sources[0].join }} 
+                                {% if config.sampleMode == 'Sample' %} 
+                                    sample (
+                                    {% if config.sampleOption == 'Percentage' %} 
+                                        {{ config.samplePercent }}
+                                    {% else %}
+                                        {{ config.sampleRows }} rows 
+                                    {% endif %}
+                                    )
+                                {% endif %} ) 
+                            {% else %}
+                                {% if col.transform | trim != '' %}{{ col.transform }}{% else %}NULL{% endif %}
+                            {% endif %}
+                            AS "{{ col.name }}"
+                            {% if not loop.last %}, {% endif %}
+                        {% endfor %}
+
+                        {{ sources[0].join }} 
+                        {% if config.sampleMode == 'Sample' %} 
+                            sample (
+                            {% if config.sampleOption == 'Percentage' %} 
+                                {{ config.samplePercent }}
+                            {% else %}
+                                {{ config.sampleRows }} rows 
+                            {% endif %}
+                            )
+                        {% endif %} )
+                        AS "SRC"
+                    ON {% for col in sources[0].columns if col.isSystemUpdateDate or col.isSystemCreateDate -%}
+                            {% if not loop.first %}
+                                AND
+                            {% endif %}
+                            "SRC"."{{ col.name }}" = "TGT"."{{ col.name }}"
+                        {% endfor %}
+                    WHEN MATCHED
+                    THEN UPDATE SET
+                    {%- for col in sources[0].columns if not col.isSystemUpdateDate %}
+                            "TGT"."{{ col.name }}" = "SRC"."{{ col.name }}"
+                        {% if not loop.last %}, {% endif %}
+                    {% endfor %}
+                    WHEN NOT MATCHED THEN
+                    INSERT (
+                    {%- for col in columns %}
+                        "{{ col.name }}"
+                        {% if not loop.last %}, {% endif %}
+                    {% endfor -%}
+                    )
+                    VALUES (
+                    {%- for col in columns %}
+                        "SRC"."{{ col.name }}"
+                        {% if not loop.last %}, {% endif %}
+                    {% endfor -%}
+                    )
+
+            {% endif %}
+
+            {% if columns | selectattr('isAvgMetric')| list | length > 0 %}
+                {{ stage('Profile Average') }}
+                
+                    MERGE INTO {{ ref_no_link(node.location.name, node.name) }} "TGT"
+                    USING (
+                        SELECT DISTINCT
+                        'AVG' as "PROFILE_METRIC",
+                        {%- for col in sources[0].columns if not col.isSystemUpdateDate %}
+                            {% if col.isAvgMetric %}
+                               (SELECT AVG("{{col.name}}") 
+                               {{ sources[0].join }} 
+                                {% if config.sampleMode == 'Sample' %} 
+                                    sample (
+                                    {% if config.sampleOption == 'Percentage' %} 
+                                        {{ config.samplePercent }}
+                                    {% else %}
+                                        {{ config.sampleRows }} rows 
+                                    {% endif %}
+                                    )
+                                {% endif %} ) 
+                            {% else %}
+                                {% if col.transform | trim != '' %}{{ col.transform }}{% else %}NULL{% endif %}
+                            {% endif %}
+                            AS "{{ col.name }}"
+                            {% if not loop.last %}, {% endif %}
+                        {% endfor %}
+
+                        {{ sources[0].join }} 
+                        {% if config.sampleMode == 'Sample' %} 
+                            sample (
+                            {% if config.sampleOption == 'Percentage' %} 
+                                {{ config.samplePercent }}
+                            {% else %}
+                                {{ config.sampleRows }} rows 
+                            {% endif %}
+                            )
+                        {% endif %} )
+                        AS "SRC"
+                     ON {% for col in sources[0].columns if col.isSystemUpdateDate or col.isSystemCreateDate -%}
+                            {% if not loop.first %}
+                                AND
+                            {% endif %}
+                            "SRC"."{{ col.name }}" = "TGT"."{{ col.name }}"
+                        {% endfor %}
+                    WHEN MATCHED
+                    THEN UPDATE SET
+                    {%- for col in sources[0].columns if not col.isSystemUpdateDate %}
+                            "TGT"."{{ col.name }}" = "SRC"."{{ col.name }}"
+                        {% if not loop.last %}, {% endif %}
+                    {% endfor %}
+                    WHEN NOT MATCHED THEN
+                    INSERT (
+                    {%- for col in columns %}
+                        "{{ col.name }}"
+                        {% if not loop.last %}, {% endif %}
+                    {% endfor -%}
+                    )
+                    VALUES (
+                    {%- for col in columns %}
+                        "SRC"."{{ col.name }}"
+                        {% if not loop.last %}, {% endif %}
+                    {% endfor -%}
+                    )
+
+            {% endif %}
+    name: Node Profilier
+    version: 1
   StepType-2:
     id: "2"
     isDisabled: false
@@ -153,10 +580,606 @@ stepTypes:
             {% endfor %}
     name: Unload
     version: 1
+  StepType-7:
+    id: "7"
+    isDisabled: false
+    metadata:
+      defaultStorageLocation: null
+      error: null
+      nodeMetadataSpec: |-
+        capitalized: CDC Table
+        short: "CDC"
+        tagColor: "#ff33cc"
+        plural: CDC Tables
+
+        config:
+        - groupName: Stream
+          items:
+          - displayName: Description
+            attributename: description
+            type: textBox
+            isRequired: false
+            default: "A CDC table consists of a few components:\n
+              1. A stream on the source node\n
+              2. The CDC table which contains a persistent replica of recent CDC records\n
+              3. A sequence to keep track of streams\n
+              4. Optional: a Task to replicate records from the Stream into the CDC table\n
+              "
+
+        - groupName: Task
+          items:
+
+          - displayName: Create Task
+            enableIf: "{{config.cdcTableEnabled}}"
+            attributeName: taskEnabled
+            type: toggleButton
+            default: false
+            isRequired: false
+
+          - displayName: Task Schedule
+            enableIf: "{{config.taskEnabled}}"
+            attributeName: taskSchedule
+            type: dropdownSelector
+            default: "Every 30 minutes"
+            options:
+            - "Every minute"
+            - "Every 5 minutes"
+            - "Every 30 minutes"
+            - "Every hour"
+            - "Every day"
+            isRequired: false
+
+          - displayName: Warehouse
+            enableIf: "{{config.taskEnabled}}"
+            attributeName: taskWarehouse
+            type: dropdownSelector
+            default: "EMEA_TRANSFORM_XS_WH"
+            options:
+            - "EMEA_TRANSFORM_XS_WH"
+            - "EMEA_TRANSFORM_S_WH"
+            - "EMEA_TRANSFORM_M_WH"
+            - "EMEA_TRANSFORM_L_WH"
+            - "COMPUTE_WH"
+            isRequired: false
+
+          - displayName: Custom Task Name
+            enableIf: "{{config.taskEnabled}}"
+            attributeName: taskCustomName
+            type: textBox
+            isRequired: false
+
+        - groupName: Hidden config
+          enableIf: "false"
+          items:
+          - displayName: Type
+            type: materializationSelector
+            default: table
+            options:
+            - table
+            isRequired: false
+
+        systemColumns:
+        - displayName: "METADATA$ACTION"
+          transform: "METADATA$ACTION"
+          dataType: STRING
+          placement: end
+          attributeName: isStreamMetadataAction
+          description: Indicates the DML operation (INSERT, DELETE) recorded.
+        - displayName: "METADATA$ISUPDATE"
+          transform: "METADATA$ISUPDATE"
+          dataType: STRING
+          placement: end
+          attributeName: isStreamMetadataIsUpdate
+          description: Indicates whether the operation was part of an UPDATE statement.
+        - displayName: "METADATA$ROW_ID"
+          transform: "METADATA$ROW_ID"
+          dataType: STRING
+          placement: end
+          attributeName: isStreamMetadataRowId
+          description: Specifies the unique and immutable ID for the row, which can be used to track changes to specific rows over time.
+        - displayName: "CDC_ID"
+          transform: ""
+          dataType: INTEGER
+          placement: end
+          attributeName: isStreamMetadataCDCId
+          description: specific CDC identifier based on a sequence.
+        - displayName: "CDC_TIMESTAMP"
+          transform: CAST(CURRENT_TIMESTAMP AS TIMESTAMP)
+          dataType: TIMESTAMP
+          placement: end
+          attributeName: isSystemCreateDate
+          description: specific attribute containing the timestamp of storing the CDC record.
+      templates:
+        create:
+          templateString: |-
+            {{ stage('Create Stream') }}
+
+            CREATE OR REPLACE STREAM {{ ref_no_link(node.location.name, "STR_" + node.name) }}
+            ON TABLE {{ ref(sources[0].dependencies[0].node.location.name, sources[0].dependencies[0].node.name) }}
+            APPEND_ONLY = FALSE
+            COMMENT = 'CDC Stream on {{ ref(node.location.name, sources[0].dependencies[0].node.name) }}'
+
+            {{ stage('Create Sequence') }}
+
+            CREATE OR REPLACE SEQUENCE {{ ref_no_link(node.location.name, "SEQ_" + node.name) }}
+
+            {{ stage('Create CDC Table') }}
+
+            CREATE OR REPLACE TABLE {{ ref_no_link(node.location.name, node.name) }}
+            (
+                {% for col in columns %}
+                    "{{ col.name }}" {{ col.dataType }}
+                    {%- if not col.nullable %} NOT NULL
+                        {%- if col.defaultValue | length > 0 %} DEFAULT {{ col.defaultValue }}{% endif %}
+                    {% endif %}
+                    {%- if col.description | length > 0 %} COMMENT '{{ col.description }}'{% endif %}
+                    {%- if not loop.last -%}, {% endif %}
+                {% endfor %}
+            )
+            {%- if node.description | length > 0 %} COMMENT = '{{ node.description }}'{% endif %}
+
+            {% if config.taskEnabled is true %}
+
+                {{ stage('Create Task') }}
+
+                CREATE OR REPLACE TASK 
+                {% if config.taskCustomName != '' %}
+                    {{ ref_no_link(node.location.name, config.taskCustomName) }}
+                {% else %}
+                    {{ ref_no_link(node.location.name, "TSK_" + node.name) }}
+                {% endif %}
+                WAREHOUSE = {{config.taskWarehouse}}
+             
+                SCHEDULE = 
+                {% if config.taskSchedule == 'Every minute' %}
+                    '1 MINUTE'
+                {% elif config.taskSchedule == 'Every 5 minutes' %}
+                    '5 MINUTE'
+                {% elif config.taskSchedule == 'Every 30 minutes' %}
+                    '30 MINUTE'
+                {% elif config.taskSchedule == 'Every hour' %}
+                    '60 MINUTE'
+                {% elif config.taskSchedule == 'Every day' %}
+                    '3600 MINUTE'
+                {% else %}
+                    'INVALID'
+                {% endif %}
+                COMMENT='Task to copy data of stream STR_{{node.name}} to CDC Table {{node.name}}'
+                WHEN SYSTEM$STREAM_HAS_DATA('{{ ref_no_link(node.location.name, "STR_" + node.name) }}')
+                AS
+                INSERT INTO {{ ref_no_link(node.location.name, node.name) }}
+
+                {% for source in sources %}
+                    SELECT
+                    {% for col in source.columns %}
+                        {% if col.name == 'CDC_ID' %}
+                            SEQ_{{node.name}}.NEXTVAL
+                        {% elif col.transform | trim != '' %}
+                            {{ col.transform.replace(source.dependencies[0].node.name, 'STR_' + node.name) }}
+                        {% elif col.sourceColumns[0].column and col.sourceColumns[0].column.name %}
+                            "STR_{{ node.name }}"."{{ col.sourceColumns[0].column.name }}"
+                        {% else %}
+                            NULL
+                        {% endif %}
+                        AS "{{ col.name }}"
+                        {%- if not loop.last -%}, {% endif %}
+                    {% endfor %}
+
+                    FROM {{ ref_no_link(node.location.name, "STR_" + node.name) }}
+
+                    {% if config.insertStrategy in ['UNION', 'UNION ALL'] and not loop.last %}
+                        {{config.insertStrategy}}
+                    {% endif %}
+
+                {% endfor %}
+
+            {% endif %}
+        run:
+          templateString: |-
+            {% if config.taskEnabled is true %}
+
+                {{ stage('Resume Task') }}
+
+                ALTER TASK 
+                {% if config.taskCustomName != '' %}
+                    {{ ref_no_link(node.location.name, config.taskCustomName) }}
+                {% else %}
+                    {{ ref_no_link(node.location.name, "TSK_" + node.name) }}
+                {% endif %}
+                RESUME
+
+            {% else %}
+
+                {{ stage('Insert From Stream') }}
+
+                INSERT INTO {{ ref_no_link(node.location.name, node.name) }}
+
+                {% for source in sources %}
+                
+                    SELECT
+                    {% for col in source.columns %}
+                        {% if col.name == 'CDC_ID' %}
+                            {{ ref_no_link(node.location.name, "SEQ_" + node.name) }}.NEXTVAL
+                        {% else %}
+                            {{ get_source_transform(col) }}
+                        {% endif %} AS "{{ col.name }}"
+                        {%- if not loop.last -%}, {% endif %}
+                    {% endfor %}
+
+                    FROM {{ ref_no_link(node.location.name, "STR_" + node.name) }} AS "{{ sources[0].dependencies[0].node.name }}"
+
+                    {% if config.insertStrategy in ['UNION', 'UNION ALL'] and not loop.last %}
+                        {{config.insertStrategy}}
+                    {% endif %}
+
+                {% endfor %}
+
+            {% endif %}
+    name: CDC Table
+    version: 1
+  StepType-8:
+    id: "8"
+    isDisabled: false
+    metadata:
+      defaultStorageLocation: null
+      error: null
+      nodeMetadataSpec: |+
+        capitalized: Stage Date
+        short: DATE
+        plural: Dates
+        tagColor: 'black'
+
+        config:
+        - groupName: Date Options
+          items:
+          - displayName: Starting Date
+            attributeName: startingDate
+            type: textBox
+            syntax: sql
+            default: 'DATEADD(DAY, -730, CURRENT_DATE)'
+
+          - displayName: Number of Days to Generate
+            attributeName: daysToGenerate
+            type: textBox
+            default: '2000'
+
+          - displayName: Generated Date Column Name
+            attributeName: dateColumnName
+            type: textBox
+            default: '"DATE_COL"'
+
+        - groupName: Additional Options
+          items:
+          - type: materializationSelector
+            default: table
+            options:
+            - table
+            isRequired: true
+
+          - displayName: Truncate Before
+            attributeName: truncateBefore
+            type: toggleButton
+            default: true
+            isRequired: true
+
+          - displayName: Pre-SQL
+            attributeName: preSQL
+            type: textBox
+            syntax: sql
+            isRequired: false
+
+          - displayName: Post-SQL
+            attributeName: postSQL
+            type: textBox
+            syntax: sql
+            isRequired: false
+
+        systemColumns:
+        - displayName: DATE_KEY
+          transform: '{{ config.dateColumnName }}'
+          dataType: 'DATE'
+          placement: beginning
+          attributeName: isDate
+
+        - displayName: 'YEAR'
+          transform: 'YEAR({{ config.dateColumnName }})'
+          dataType: SMALLINT
+          placement: beginning
+          attributeName: isYear
+
+        - displayName: 'MONTH'
+          transform: 'MONTH({{ config.dateColumnName }})'
+          dataType: SMALLINT
+          placement: beginning
+          attributeName: isMonth
+
+        - displayName: 'MONTH_NAME'
+          transform: 'MONTHNAME({{ config.dateColumnName }})'
+          dataType: CHAR(3)
+          placement: beginning
+          attributeName: isMonthName
+
+        - displayName: 'DAY_OF_MONTH'
+          transform: 'DAY({{ config.dateColumnName }})'
+          dataType: SMALLINT
+          placement: beginning
+          attributeName: isDayOfMonth
+
+        - displayName: 'DAY_OF_WEEK'
+          transform: 'DAYOFWEEK({{ config.dateColumnName }})'
+          dataType: VARCHAR(9)
+          placement: beginning
+          attributeName: isDayOfWeek
+
+        - displayName: 'WEEK_OF_YEAR'
+          transform: 'WEEKOFYEAR({{ config.dateColumnName }})'
+          dataType: SMALLINT
+          placement: beginning
+          attributeName: isWeekOfYear
+
+        - displayName: 'DAY_OF_YEAR'
+          transform: 'DAYOFYEAR({{ config.dateColumnName }})'
+          dataType: SMALLINT
+          placement: beginning
+          attributeName: isYearColumn
+
+
+
+      templates:
+        create:
+          templateString: |+
+            {{ stage('Create Stage Table') }}
+
+            	CREATE OR REPLACE TABLE {{ ref_no_link(node.location.name, node.name) }}
+            	(
+            		{% for col in columns %}
+            			"{{ col.name }}" {{ col.dataType }}
+            			{%- if not col.nullable %} NOT NULL
+            				{%- if col.defaultValue | length > 0 %} DEFAULT {{ col.defaultValue }}{% endif %}
+            			{% endif %}
+            			{%- if col.description | length > 0 %} COMMENT '{{ col.description }}'{% endif %}
+            			{%- if not loop.last -%}, {% endif %}
+            		{% endfor %}
+            	)
+            	{%- if node.description | length > 0 %} COMMENT = '{{ node.description }}'{% endif %}
+
+        run:
+          templateString: |
+            {% if config.preSQL %}
+                {{ stage('Pre-SQL') }}
+                {{ config.preSQL }}
+            {% endif %}
+
+
+            {% if config.truncateBefore %}
+                {{ stage('Truncate Stage Table') }}
+                TRUNCATE IF EXISTS {{ ref_no_link(node.location.name, node.name) }}
+            {% endif %}
+
+
+            {{ stage('Insert ' + sources[0].name | string ) }}
+
+                INSERT INTO {{ ref_no_link(node.location.name, node.name) }}
+                (
+                    {% for col in sources[0].columns %}
+                        "{{ col.name }}"
+                        {%- if not loop.last -%},{% endif %}
+                    {% endfor %}
+                )
+
+                WITH CTE_DATE_GENERATOR AS (
+                    SELECT DATEADD(DAY, SEQ4(), {{config.startingDate }}) AS {{ config.dateColumnName }}
+                    FROM TABLE(GENERATOR(ROWCOUNT=>{{ config.daysToGenerate }}))
+                )
+
+                SELECT
+                {% for col in sources[0].columns %}
+                    {{ get_source_transform(col) }} AS "{{ col.name }}"
+                    {%- if not loop.last -%}, {% endif %}
+                {% endfor %}
+
+                FROM CTE_DATE_GENERATOR
+
+            {% if config.postSQL %}
+                {{ stage('Post-SQL') }}
+                {{ config.postSQL }}
+            {% endif %}
+    name: DATE
+    version: 1
+  StepType-9:
+    id: "9"
+    isDisabled: false
+    metadata:
+      defaultStorageLocation: null
+      error: null
+      nodeMetadataSpec: |-
+        capitalized: External Table
+        short: 'EXT'
+        tagColor: '#C39BD3'
+        isDisabled: false
+        plural: External Tables
+
+        deployStrategy: advanced
+        config:
+        - groupName: File Location
+          items: 
+
+          - displayName: Stage
+            attributeName: fileLocation
+            type: dropdownSelector
+            default: TPCH
+            options:
+            - "TPCH"
+            - "UserData"
+            - "UserData_Delta"
+            - "RefData"
+            - "s3_lineitem_json"
+            isRequired: true
+
+          - displayName: File Pattern
+            attributeName: filePattern
+            type: textBox
+            default: ".*[.]json"
+            isRequired: true
+
+        - groupName: File Format 
+          items:
+          - displayName: File Type
+            attributeName: fileType
+            type: dropdownSelector
+            default: JSON
+            options:
+            - "CSV"
+            - "JSON"
+            - "Parquet"
+            isRequired: true
+
+          - displayName: Compression
+            attributeName: compression
+            enableIf: "{{ config.fileType in ['CSV','JSON'] }}" 
+            type: dropdownSelector
+            default: AUTO
+            options:
+            - "AUTO"
+            - "GZIP"
+            - "BZ2"
+            - "BROTLI"
+            - "ZSTD"
+            - "DEFLATE"
+            - "RAW_DEFLATE"
+            - "NONE"
+            isRequired: false
+
+          - displayName: Record delimiter
+            attributeName: recDelim
+            type: textBox
+            enableIf: "{{ config.fileType == 'CSV'}}" 
+            default: "\n"
+            isRequired: false
+
+          - displayName: Field delimiter
+            attributeName: fieldDelim
+            type: textBox
+            enableIf: "{{ config.fileType == 'CSV'}}" 
+            default: ","
+            isRequired: false
+
+          - displayName: Field optionally enclosed by
+            attributeName: fieldEnclosed
+            type: textBox
+            enableIf: "{{ config.fileType == 'CSV'}}" 
+            default: "\\042"
+            isRequired: false
+
+          - displayName: Number of header lines to skip
+            attributeName: skipHeader
+            type: textBox
+            enableIf: "{{ config.fileType == 'CSV'}}" 
+            default: "1"
+            isRequired: false
+
+          - displayName: Skip blank lines
+            attributeName: skipBlankLines
+            enableIf: "{{ config.fileType == 'CSV'}}" 
+            type: toggleButton
+            default: true
+            isRequired: false
+
+          - displayName: Trim space
+            attributeName: trimSpace
+            enableIf: "{{ config.fileType == 'CSV'}}" 
+            type: toggleButton
+            default: true
+            isRequired: false
+
+        - groupName: Additional Options
+          items:
+          - displayName: Auto Refresh
+            attributeName: autoRefresh
+            type: toggleButton
+            default: false
+            isRequired: false
+
+          - displayName: AWS SNS Topic
+            attributeName: snsTopic
+            type: textBox
+            enableIf: "{{ config.autoRefresh }}"
+            default: "arn:aws:sns:us-east-1:121674918127:prod-emea-s3-notification"
+            isRequired: false
+
+        - groupName: Hidden config
+          enableIf: "false"
+          items:
+          - displayName: Type
+            type: materializationSelector
+            default: table
+            options:
+            - table
+            isRequired: true
+
+        systemColumns:
+
+        - displayName: 'VALUE'
+          attributeName: 'VALUE'
+          transform: ''
+          dataType: VARIANT
+          placement: beginning
+        - displayName: 'METADATA$FILENAME'
+          attributeName: 'METADATA$FILENAME'
+          transform: ''
+          dataType: STRING
+          placement: end
+      templates:
+        create:
+          templateString: |-
+            {% if desiredState == undefined %}
+
+              DROP EXTERNAL TABLE {{ ref_no_link(currentState.node.location.name, currentState.node.name) }}
+
+            {% else %}
+
+            {{ stage('Create External Table') }}
+
+            CREATE OR REPLACE EXTERNAL TABLE {{ ref_no_link(desiredState.node.location.name, desiredState.node.name) }}
+              {% if desiredState.config.fileType == "CSV" %}
+                {% for col in desiredState.sources[0].columns if (col.name | upper != "VALUE" and col.name | upper != "METADATA$FILENAME") %}
+                  {% if loop.first %}({% endif %}
+                    "{{ col.name }}" {{ col.dataType }} AS (value:c{{ loop.index }}::{{ col.dataType }})
+                  {%- if col.description | length > 0 %} COMMENT '{{ col.description }}'{% endif %}
+                  {%- if not loop.last -%}, {% else %}){% endif %}
+                {% endfor %}
+              {% endif %}
+              
+              with location = @{{ ref_no_link(desiredState.node.location.name, desiredState.config.fileLocation | upper) | trim }}
+              pattern='{{ desiredState.config.filePattern }}'
+              file_format = (type = {{ desiredState.config.fileType }}
+              {% if desiredState.config.fileType == "CSV" %}
+                {% if desiredState.config.recDelim != null %}record_delimiter = '{{ desiredState.config.recDelim }}'{% endif %}
+                {% if desiredState.config.fieldDelim != null %}field_delimiter = '{{ desiredState.config.fieldDelim }}'{% endif %}
+                {% if desiredState.config.fieldEnclosed != null %}field_optionally_enclosed_by = '{{ desiredState.config.fieldEnclosed }}'{% endif %}
+                {% if desiredState.config.skipHeader != null %}skip_header = {{ desiredState.config.skipHeader }}{% endif %}
+                {% if desiredState.config.skipBlankLines %}skip_blank_lines = {{ desiredState.config.skipBlankLines }}{% endif %}
+                {% if desiredState.config.trimSpace %}trim_space = {{ desiredState.config.trimSpace }}{% endif %}
+              {% endif %}
+              )
+              auto_refresh = {{ desiredState.config.autoRefresh }}
+              {% if desiredState.config.autoRefresh and desiredState.config.snsTopic != null %}aws_sns_topic = '{{ config.snsTopic }}'{% endif %}
+              {%- if desiredState.node.description | length > 0 %} COMMENT = '{{ desiredState.node.description }}'{% endif %}
+            ;
+            {% endif %}
+        run:
+          templateString: |-
+            {% if config.autoRefresh is false %}
+            {{ stage('Refresh External Table') }}
+            ALTER EXTERNAL TABLE {{ ref_no_link(node.location.name, node.name) }} REFRESH
+            {% endif %}
+    name: External Table
+    version: 1
   StepType-Dimension:
     id: Dimension
     isDisabled: false
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |-
         capitalized: Dimension
@@ -603,6 +1626,7 @@ stepTypes:
     id: Fact
     isDisabled: false
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |
         capitalized: Fact
@@ -1006,6 +2030,7 @@ stepTypes:
     id: Hub
     isDisabled: false
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |-
         capitalized: Hub
@@ -1251,6 +2276,7 @@ stepTypes:
     id: Link
     isDisabled: false
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |-
         capitalized: Link
@@ -1495,6 +2521,7 @@ stepTypes:
     id: Satellite
     isDisabled: false
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |-
         capitalized: Satellite
@@ -1741,6 +2768,7 @@ stepTypes:
     id: Source
     isDisabled: false
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |-
         capitalized: Source
@@ -1762,6 +2790,7 @@ stepTypes:
     id: Stage
     isDisabled: false
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |
         capitalized: Stage
@@ -1966,6 +2995,7 @@ stepTypes:
     id: View
     isDisabled: true
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |
         capitalized: View
@@ -2045,6 +3075,7 @@ stepTypes:
     id: persistentStage
     isDisabled: false
     metadata:
+      defaultStorageLocation: null
       error: null
       nodeMetadataSpec: |
         capitalized: Persistent Stage
