@@ -506,7 +506,7 @@ stepTypes:
     isDisabled: false
     metadata:
       error: null
-      nodeMetadataSpec: |
+      nodeMetadataSpec: |-
         capitalized: SATELLITE MULTI-ACTIVE
         short: 'SAT_MA'
         plural: 'Satellites Multi-Active'
@@ -548,6 +548,19 @@ stepTypes:
             attributeName: postSQL
             type: textBox
             isRequired: false
+
+        systemColumns:
+        - displayName: "LOAD_DATE"
+          transform: CAST(CURRENT_TIMESTAMP AS TIMESTAMP)
+          dataType: TIMESTAMP
+          placement: end
+          attributeName: isSystemCreateDate
+
+        - displayName: "RECORD_SOURCE"
+          transform: "''"
+          dataType: VARCHAR
+          placement: end
+          attributeName: isSystemRecordSource
       templates:
         create:
           templateString: |-
