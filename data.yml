@@ -1818,7 +1818,6 @@ stepTypes:
             		{% endfor %}
             	{% endfor %}
             {% endif %}
-            			
     name: Link
     version: 1
   StepType-Satellite:
@@ -1981,8 +1980,7 @@ stepTypes:
             			{{ test.templateString }}
             		{% endfor %}
             	{% endfor %}
-            {% endif %}
-            			
+            {% endif %}  			
     name: Satellite
     version: 1
   StepType-Source:
