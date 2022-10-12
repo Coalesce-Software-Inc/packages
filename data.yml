@@ -1654,7 +1654,6 @@ stepTypes:
             		{% endfor %}
             	{% endfor %}
             {% endif %}
-            			
     name: Hub
     version: 1
   StepType-Link:
