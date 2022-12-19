@@ -961,6 +961,723 @@ stepTypes:
             {% endif %}
     name: SQL
     version: 1
+  StepType-14:
+    id: "14"
+    isDisabled: false
+    metadata:
+      defaultStorageLocation: null
+      error: null
+      nodeMetadataSpec: |+
+        capitalized: Copy Into
+        short: 'COPY'
+        tagColor: '#6ca37b'
+        isDisabled: false
+        plural: Copy Into
+        config:
+        - groupName: Source Data
+          items:
+          - displayName: Stage Name
+            attributeName: stageName
+            type: textBox
+            default: '@'
+            isRequired: true
+
+          - displayName: File Name(s) (Optional - Use single quotes and commas)
+            attributeName: fileNames
+            type: textBox
+            isRequired: false
+
+          - displayName: File Pattern (Optional - Use single quotes)
+            attributeName: filePattern
+            type: textBox
+            isRequired: false
+
+        - groupName: File Format
+          items:
+          - displayName: File Format Definition
+            attributeName: fileFormatType
+            type: dropdownSelector
+            default: "File Format Name"
+            options:
+            - File Format Name
+            - File Format Values
+          - displayName: File Format Name
+            attributeName: fileFormatName
+            type: textBox
+            default: ""
+            isRequired: false
+            enableIf: "{% if config.fileFormatType == 'File Format Name' %} true {% else %} false {% endif %}"
+          - displayName: File Type
+            attributeName: fileType
+            type: dropdownSelector
+            default: CSV
+            options:
+            - "CSV"
+            - "PARQUET"
+            - "JSON"
+            - "AVRO"
+            - "ORC"
+            - "XML"
+            isRequired: false
+            enableIf: "{% if config.fileFormatType != 'File Format Name' %} true {% else %} false {% endif %}"
+          - displayName: Compression
+            attributeName: compression
+            enableIf: "{% if (config.fileFormatType != 'File Format Name' and config.fileType in ('CSV','JSON')) %} true {% else %} false {% endif %}"
+            type: dropdownSelector
+            default: "AUTO"
+            options:
+            - "AUTO"
+            - "GZIP"
+            - "BZ2"
+            - "BROTLI"
+            - "ZSTD"
+            - "DEFLATE"
+            - "RAW_DEFLATE"
+            - "NONE"
+            isRequired: false
+          - displayName: Record delimiter
+            attributeName: recDelim
+            type: textBox
+            enableIf: "{% if (config.fileFormatType != 'File Format Name' and config.fileType in ('CSV')) %} true {% else %} false {% endif %}"
+            default: "\n"
+            isRequired: false
+          - displayName: Field delimiter
+            attributeName: fieldDelim
+            type: textBox
+            enableIf: "{% if (config.fileFormatType != 'File Format Name' and config.fileType in ('CSV')) %} true {% else %} false {% endif %}"
+            default: ","
+            isRequired: false
+          - displayName: Field optionally enclosed by
+            attributeName: fieldEnclosed
+            type: textBox
+            enableIf: "{% if (config.fileFormatType != 'File Format Name' and config.fileType in ('CSV')) %} true {% else %} false {% endif %}"
+            default: "\\042"
+            isRequired: false
+          - displayName: Number of header lines to skip
+            attributeName: skipHeader
+            type: textBox
+            enableIf: "{% if (config.fileFormatType != 'File Format Name' and config.fileType in ('CSV')) %} true {% else %} false {% endif %}"
+            default: "1"
+            isRequired: false
+          - displayName: Skip blank lines
+            attributeName: skipBlankLines
+            enableIf: "{% if (config.fileFormatType != 'File Format Name' and config.fileType in ('CSV')) %} true {% else %} false {% endif %}"
+            type: toggleButton
+            default: true
+            isRequired: false
+          - displayName: Trim space
+            attributeName: trimSpace
+            enableIf: "{% if (config.fileFormatType != 'File Format Name' and config.fileType in ('CSV')) %} true {% else %} false {% endif %}"
+            type: toggleButton
+            default: true
+            isRequired: false
+
+        systemColumns:
+        - displayName: File Name
+          transform: metadata$filename
+          dataType: VARCHAR
+          placement: end
+          attributeName: copyFileName
+
+        - displayName: Copy Timestamp
+          transform: current_timestamp()
+          dataType: timestamp
+          placement: end
+          attributeName: copyTimestamp
+
+      templates:
+        create:
+          templateString: |
+            {% set srcSchName = node.location.name %}
+            {% set db = storageLocations | selectattr('name', 'equalto', srcSchName) | map(attribute='database') | first %}
+            {% set sch = storageLocations | selectattr('name', 'equalto', srcSchName) | map(attribute='schema') | first %}
+
+            {{ stage('Create Table') }}
+            CREATE OR REPLACE TABLE "{{ db }}"."{{ sch }}"."{{ node.name }}" (
+                {% for col in columns %}
+                    "{{ col.name }}" {{ col.dataType }}
+                {%- if col.Description | length > 0 %} COMMENT '{{ col.Description }}'{% endif %}
+                {%- if not loop.last -%}, {% endif %}
+            {% endfor %}
+            )
+        run:
+          templateString: |-
+            {% set srcSchName = node.location.name %}
+            {% set db = storageLocations | selectattr('name', 'equalto', srcSchName) | map(attribute='database') | first %}
+            {% set sch = storageLocations | selectattr('name', 'equalto', srcSchName) | map(attribute='schema') | first %}
+
+
+            {%- if config.filePattern | length > 0 -%} 
+                {%- set filePatternSQL = 'PATTERN = ' + config.filePattern -%} 
+            {%- else -%}
+                {%- set filePatternSQL = "" -%} 
+            {%- endif -%}
+
+            {%- if config.fileNames | length > 0 %} 
+                {% set fileNameSQL = 'FILES = (' + config.fileNames + ')' %} 
+            {%- else -%}
+                {% set fileNameSQL = "" %} 
+            {% endif %}
+
+            {{ stage('Copy Into') }}
+                COPY INTO "{{ db }}"."{{ sch }}"."{{ node.name }}" (
+                    {%- for col in columns %}
+                        "{{ col.name }}"
+                    {%- if not loop.last -%}, {% endif %}
+                    {%- endfor %}
+                )
+                FROM (SELECT
+                    {%- for col in sources[0].columns %}
+                        {{ col.transform }}
+                    {%- if not loop.last -%}, {% endif %}
+                    {%- endfor %}
+                     FROM @"{{ db }}"."{{ sch }}"."{{ config.stageName }}") 
+                {{- fileNameSQL }}
+                {{ filePatternSQL }}
+                FILE_FORMAT = (FORMAT_NAME = "{{ db }}"."{{ sch }}".{{ config.fileFormatName}})
+    name: Copy Into
+    version: 1
+  StepType-15:
+    id: "15"
+    isDisabled: false
+    metadata:
+      defaultStorageLocation: null
+      error: null
+      nodeMetadataSpec: |-
+        capitalized: Stream and Insert or Merge
+        short: SIM
+        tagColor: black
+        plural: Streams and Merges
+
+        deployStrategy: advanced
+
+        config:
+        - groupName: Stream Options
+          items:
+          - displayName: Append Only Stream
+            attributeName: appendOnly
+            type: toggleButton
+            default: true
+            isRequired: true
+
+          - displayName: Show Initial Rows
+            attributeName: initialRows
+            type: toggleButton
+            default: true
+            isRequired: true
+
+        - groupName: Target Loading Options
+          items:
+          - displayName: Load Type
+            attributeName: loadType
+            type: dropdownSelector
+            default: Insert
+            options:
+              - Insert
+              - Merge
+            isRequired: true
+
+          - displayName: Table Key Column(s)
+            attributeName: tblKey
+            type: columnSelector
+            isRequired: false
+            enableIf: "{% if config.loadType == 'Merge' %} true {% else %} false {% endif %}"
+
+          - displayName: Row Update Timestamp Column
+            attributeName: tblChgTS
+            type: columnSelector
+            isRequired: false
+            enableIf: "{% if config.loadType == 'Merge' %} true {% else %} false {% endif %}"
+         
+        - groupName: Sceduling Options
+          items:
+          - displayName: Sceduling Options
+            attributeName: schedulingMode
+            type: dropdownSelector
+            default: Warehouse Task
+            options:
+              - Warehouse Task
+              - Serverless Task
+            isRequired: true
+
+          - displayName: When Source Stream has Data Flag
+            attributeName: flagSrcStream
+            type: toggleButton
+            isRequired: true
+
+          - displayName: Select Warehouse on which to run task
+            attributeName: whName
+            type: textBox
+            default: '<WAREHOUSE_NAME>'
+            isRequired: false
+            enableIf: "{% if config.schedulingMode == 'Warehouse Task' %} true {% else %} false {% endif %}"
+
+          - displayName: Select initial serverless Warehouse size
+            attributeName: serverlessSize
+            type: dropdownSelector
+            default: 'MEDIUM'
+            options:
+              - XSMALL
+              - SMALL
+              - MEDIUM
+              - LARGE
+              - XLARGE
+              - XXLARGE
+            isRequired: false
+            enableIf: "{% if config.schedulingMode == 'Serverless Task' %} true {% else %} false {% endif %}"
+
+          - displayName: Task Schedule
+            attributeName: schedulePeriodOption
+            type: dropdownSelector
+            default: Minutes
+            options:
+              - Minutes
+              - CRON
+            isRequired: TRUE
+
+          - displayName: Enter task schedule using minutes
+            attributeName: schedulePeriod
+            type: textBox
+            default: '60'
+            isRequired: false
+            enableIf: "{% if config.schedulePeriodOption == 'Minutes' %} true {% else %} false {% endif %}"
+
+          - displayName: Enter task schedule using CRON
+            attributeName: scheduleCRON
+            type: textBox
+            default: '5 0-23 * * * America/Los_Angeles'
+            isRequired: false
+            enableIf: "{% if config.schedulePeriodOption == 'CRON' %} true {% else %} false {% endif %}"
+
+        - groupName: "Pre/Post SQL"
+          items: 
+          - displayName: Pre-SQL
+            attributeName: preSQL
+            type: textBox
+            syntax: sql
+            isRequired: false
+
+          - displayName: Post-SQL
+            attributeName: postSQL
+            type: textBox
+            syntax: sql
+            isRequired: false
+      templates:
+        create:
+          templateString: |+
+            {% if (currentState == undefined and desiredState != undefined) or (currentState != undefined and desiredState != undefined ) %}
+
+            {# Source Stream Location and Name #}
+            {% set srcSchName = desiredState.sources[0].dependencies[0].node.location.name %}
+            {% set srcDb = desiredState.storageLocations | selectattr('name', 'equalto', srcSchName) | map(attribute='database') | first %}
+            {% set srcSch = desiredState.storageLocations | selectattr('name', 'equalto', srcSchName) | map(attribute='schema') | first %}
+            {% set srcTbl = desiredState.sources[0].dependencies[0].node.name %}
+            {% set strName = srcTbl + '_STREAM' %}
+            {% set fqSrcTblName = '"' + srcDb + '"."' + srcSch + '"."' + srcTbl + '"' %}
+            {% set fqStrName = '"' + srcDb + '"."' + srcSch + '"."' + strName + '"' %}
+            {% set strFrom = desiredState.sources[0].join | replace(srcTbl, strName) %}
+
+            {# Target Table Info #}
+            {% set tgtDb = ref_no_link(desiredState.node.location.name, desiredState.node.name).split('.')[0] %} 
+            {% set tgtSch = ref_no_link(desiredState.node.location.name, desiredState.node.name).split('.')[1] %} 
+            {% set tgtTbl = ref_no_link(desiredState.node.location.name, desiredState.node.name) %}
+
+            {# Task Info #}
+            {% set taskName = desiredState.node.name + '_TASK'  %}
+            {%- set fqTaskName = tgtDb + '.' + tgtSch + '."' + taskName + '"' -%} 
+
+            {% set tblColid = desiredState.columns | map(attribute='id') | list %}
+            {% set tblCol = desiredState.columns | map(attribute='name') | list %}
+            {% set tblKey = desiredState.columns | selectattr('tblKey', 'defined') | map(attribute='name') | list %}
+            {% set tblColUpd = tblCol | reject('in', tblKeys) | list %}
+            {%- set tblKeyColStr = '"'+tblKey | join('", "')+'"' -%}
+            {% set recTS = desiredState.columns | selectattr('tblChgTS', 'defined') | map(attribute='name') | first %}
+
+            {{ stage('Create Stream') }}
+            CREATE OR REPLACE STREAM {{ fqStrName }}
+                ON TABLE {{ fqSrcTblName }}
+                APPEND_ONLY = {% if desiredState.config.appendOnly == true %} TRUE {% else %} FALSE {% endif %}
+                SHOW_INITIAL_ROWS = {% if desiredState.config.initialRows == true %} TRUE {% else %} FALSE {% endif %}
+
+                
+            {{ stage('Create Target Table') }}
+            CREATE OR REPLACE TABLE {{ tgtTbl }}
+                (
+                {%- for col in desiredState.columns %}
+                        "{{ col.name }}" {{ col.dataType }}
+                        {%- if col.description | length > 0 %} COMMENT '{{ col.description }}'{% endif %}
+                        {%- if not loop.last -%}, {% endif %}
+                {%- endfor %}
+                )
+
+            {{ stage('Create Task') }}
+                {# Task Type #}
+                {%- if desiredState.config.schedulingMode == 'Warehouse Task' -%} 
+                    {%- set taskType = 'WAREHOUSE = ' + desiredState.config.whName -%} 
+                {%- else -%}
+                    {%- set taskType = 'USER_TASK_MANAGED_INITIAL_WAREHOUSE_SIZE = ' + desiredState.config.serverlessSize -%} 
+                {%- endif -%}
+                {# Schedule Type #}
+                {%- if desiredState.config.schedulePeriodOption == 'Minutes' -%} 
+                    {%- set schedule = 'SCHEDULE = ' + "'" + desiredState.config.schedulePeriod + ' MINUTE' + "'" -%} 
+                {%- else -%}
+                    {%- set schedule = 'SCHEDULE = ' + "'" + 'USING CRON ' + desiredState.config.scheduleCRON + "'" -%} 
+                {%- endif -%}
+                {# When Stream has data logic #}
+                {%- if desiredState.config.flagSrcStream == true -%} 
+                    {%- set poll = "WHEN SYSTEM$STREAM_HAS_DATA('" + fqStrName + "')" -%} 
+                {%- endif -%}
+                
+                CREATE OR REPLACE TASK 
+                    {{ fqTaskName }} 
+                    {{ taskType}} 
+                    {{ schedule}} 
+                    {{ poll }} 
+                AS 
+                {% if desiredState.config.loadType == 'Insert' -%} 
+                INSERT INTO {{ tgtTbl }}
+                SELECT {% for id in tblColid %}
+                        {% set col = desiredState.sources[0].columns | selectattr('id', 'equalto', id) | map(attribute='name') | first -%}
+                        {% set colTran = desiredState.sources[0].columns | selectattr('id', 'equalto', id) | map(attribute='transform') | first -%}
+                        {%- if colTran == "" -%}
+                          "{{ col }}" as "{{ col }}" {%- if not loop.last -%}, {%- endif -%}
+                        {%- else -%}
+                          {{ colTran | replace(srcTbl, strName) }} as "{{ col }}" {%- if not loop.last -%}, {%- endif -%}
+                        {%- endif %}
+                    {%- endfor %}
+                 {{ strFrom }}
+                {% else -%}
+                MERGE INTO {{ tgtTbl }} tgt USING
+                -- Select Statement Preparing Data for Merge
+                (SELECT {% for id in tblColid %}
+                        {% set col = desiredState.sources[0].columns | selectattr('id', 'equalto', id) | map(attribute='name') | first -%}
+                        {% set colTran = desiredState.sources[0].columns | selectattr('id', 'equalto', id) | map(attribute='transform') | first -%}
+                        {%- if colTran == "" -%}
+                          "{{ col }}" as "{{ col }}" {%- if not loop.last -%}, {%- endif -%}
+                        {%- else -%}
+                          {{ colTran | replace(srcTbl, strName) }} as "{{ col }}" {%- if not loop.last -%}, {%- endif -%}
+                        {%- endif %}
+                    {%- endfor %}
+                 {{ strFrom }}
+                 QUALIFY ROW_NUMBER() over (partition by {{ tblKeyColStr }} order by "{{ recTS }}" desc) = 1) src
+                 -- Join Condition
+                 ON {% for col in tblKey -%}
+                     src."{{ col }}" = tgt."{{ col }}"
+                {% if not loop.last %} AND {% endif %}
+                    {%- endfor -%}
+                -- What to do if data is matched based on table key
+                WHEN MATCHED THEN UPDATE SET 
+                    {%- for col in tblColUpd %}
+                            tgt."{{ col }}" = src."{{ col }}"
+                            {%- if not loop.last -%}, {%- endif %}
+                    {%- endfor %}
+                -- What to do with new records based on table key
+                WHEN NOT MATCHED THEN INSERT 
+                    (
+                    {%- for col in desiredState.columns -%}
+                            "{{ col.name }}"
+                            {%- if not loop.last -%}, {% endif %}
+                    {% endfor %}) 
+                VALUES (
+                    {%- for col in desiredState.columns -%}
+                            src."{{ col.name }}"
+                            {%- if not loop.last -%}, {% endif %}
+                    {% endfor %})
+                {%- endif -%}
+
+            {{ stage('Resume Task') }}
+                ALTER TASK {{ fqTaskName }} RESUME;
+
+            {% elif currentState != undefined and desiredState == undefined %}
+
+            {# Source Stream Location and Name #}
+            {% set srcSchName = currentState.sources[0].dependencies[0].node.location.name %}
+            {% set srcDb = currentState.storageLocations | selectattr('name', 'equalto', srcSchName) | map(attribute='database') | first %}
+            {% set srcSch = currentState.storageLocations | selectattr('name', 'equalto', srcSchName) | map(attribute='schema') | first %}
+            {% set srcTbl = currentState.sources[0].dependencies[0].node.name %}
+            {% set strName = srcTbl + '_STREAM' %}
+            {% set fqSrcTblName = '"' + srcDb + '"."' + srcSch + '"."' + srcTbl + '"' %}
+            {% set fqStrName = '"' + srcDb + '"."' + srcSch + '"."' + strName + '"' %}
+            {% set strFrom = currentState.sources[0].join | replace(srcTbl, strName) %}
+
+            {# Target Table Info #}
+            {% set tgtDb = ref_no_link(currentState.node.location.name, currentState.node.name).split('.')[0] %} 
+            {% set tgtSch = ref_no_link(currentState.node.location.name, currentState.node.name).split('.')[1] %} 
+            {% set tgtTbl = ref_no_link(currentState.node.location.name, currentState.node.name) %}
+
+            {# Task Info #}
+            {% set taskName = currentState.node.name + '_TASK'  %}
+            {%- set fqTaskName = tgtDb + '.' + tgtSch + '."' + taskName + '"' -%} 
+
+            {% set tblColid = currentState.columns | map(attribute='id') | list %}
+            {% set tblCol = currentState.columns | map(attribute='name') | list %}
+            {% set tblKey = currentState.columns | selectattr('tblKey', 'defined') | map(attribute='name') | list %}
+            {% set tblColUpd = tblCol | reject('in', tblKeys) | list %}
+            {%- set tblKeyColStr = '"'+tblKey | join('", "')+'"' -%}
+            {% set recTS = currentState.columns | selectattr('tblChgTS', 'defined') | map(attribute='name') | first %}
+
+            {{ stage('Drop Stream') }}
+            DROP STREAM IF EXISTS {{ fqStrName }}
+            {{ stage('Drop Table') }}
+            DROP TABLE IF EXISTS {{ tgtTbl }}
+            {{ stage('Drop Task') }}
+            DROP TASK IF EXISTS {{ fqTaskName }} 
+
+            {%- else -%}
+
+            {{ stage('Nothing to do.') }}
+            select 1 = 0
+
+            {% endif %}
+
+        run:
+          templateString: ""
+    name: Stream and Insert or Merge
+    version: 1
+  StepType-16:
+    id: "16"
+    isDisabled: false
+    metadata:
+      defaultStorageLocation: null
+      error: null
+      nodeMetadataSpec: |
+        capitalized: Dynamic Table
+        short: DT
+        plural: Dynamic Tables
+        tagColor: '#2299C4'
+
+        deployStrategy: advanced
+
+        config:
+        - groupName: Dynamic Table
+          items:
+            
+          - displayName: Refresh Warehouse
+            attributeName: whName
+            type: textBox
+            default: 'compute_wh'
+            isRequired: true
+
+          - type: tabular
+            displayName: 'Lag Specification'
+            attributeName: lagSpec
+            columns:
+          
+            -  type: textBox
+               displayName: Time Value
+               attributeName: lagNumber
+               default: 60
+               isRequired: true
+            
+            -  type: dropdownSelector
+               displayName: Time Period
+               attributeName: lagType
+               default: Minutes
+               options:
+               - Seconds
+               - Minutes
+               - Hours
+               - Days
+               isRequired: true
+            
+            isRequired: true
+
+        - groupName: Change Tracking Options
+          items:
+
+          - displayName: Enable Change Tracking
+            attributeName: trackChanges
+            type: toggleButton
+            default: false
+
+          - displayName: Table Key Column(s)
+            attributeName: keyColumn
+            type: columnSelector
+            isRequired: false
+            enableIf: "{{ config.trackChanges }}"
+
+          - displayName: Row Update Timestamp Column
+            attributeName: timeColumn
+            type: columnSelector
+            isRequired: false
+            enableIf: "{{ config.trackChanges }}"
+
+          - displayName: Propagate Last Non-Delete
+            attributeName: nonDelete
+            type: toggleButton
+            default: false
+            enableIf: "{{ config.trackChanges }}"
+
+          - displayName: DML Identifier Column
+            attributeName: dmlColumn
+            type: columnSelector
+            isRequired: false
+            enableIf: "{{ config.nonDelete and config.trackChanges }}"
+         
+          - displayName: Delete Indentifier Value
+            attributeName: deleteValue
+            type: textBox
+            default: 'D'
+            isRequired: false
+            enableIf: "{{ config.nonDelete and config.trackChanges }}"
+
+          - displayName: Current Values Only
+            attributeName: isOnlyCurrent
+            type: toggleButton
+            default: false
+            enableIf: "{{ config.trackChanges }}"
+         
+        - groupName: Other Options
+          items:
+          - displayName: Enable Tests
+            attributeName: testsEnabled
+            type: toggleButton
+            default: true
+            
+          - displayName: Pre-SQL
+            attributeName: preSQL
+            type: textBox
+            syntax: sql
+            isRequired: false
+
+          - displayName: Post-SQL
+            attributeName: postSQL
+            type: textBox
+            syntax: sql
+            isRequired: false
+      templates:
+        create:
+          templateString: |-
+            {#- Convenience variables for advanced deploy #}
+            {#- These can be easily changed when changing deploy strategy #}
+            {%- set config = desiredState.config %}
+            {%- set locationName = desiredState.node.location.name %}
+            {%- set nodeName = desiredState.node.name %}
+            {%- set sources = desiredState.sources %}
+            {%- set columns = desiredState.columns %}
+            {#- Create various lists of columns to work with #}
+            {%- set columnList = columns | map(attribute='name') | list %}
+            {%- set keyColumnList = columns | selectattr('keyColumn', 'defined') | map(attribute='name') | list %}
+            {%- set timeColumnList = columns | selectattr('timeColumn', 'defined') | map(attribute='name') | list %}
+            {%- set dmlColumnList = columns | selectattr('dmlColumn', 'defined') | map(attribute='name') | list %}
+            {#- The Excluded list of columns depends on certain values #}
+            {%- if not config.trackChanges %}
+                {%- set excludeList = [] %}
+            {%- elif config.trackChanges and not config.nonDelete %}
+                {%- set excludeList = (timeColumnList) | unique | list %}
+            {%- else %}
+                {%- set excludeList = (timeColumnList + dmlColumnList) | unique | list %}
+            {%- endif %}
+            {%- set includeList = columnList | reject('in', excludeList) | list %}
+            {# Turn lists of columns into strings or joined strings where needed #}
+            {%- set keyColumns = '"'+keyColumnList | join('", "')+'"' %}
+            {%- set timeColumn = timeColumnList | first %}
+            {%- set dmlColumn = dmlColumnList | first %}
+            {%- set dmlValue = config.deleteValue %}
+            {%- set dtLagNumber = config.lagSpec.get('items') | map(attribute='lagNumber') | first %}
+            {%- set dtLagType = config.lagSpec.get('items') | map(attribute='lagType') | first %}
+            {%- set currentFlag = 'IS_CURRENT' %}
+            {%- if desiredState == undefined %}
+              DROP DYNAMIC TABLE {{ ref_no_link(currentState.node.location.name, currentState.node.name) }}
+            {%- else %}
+            {{- stage('Create Dynamic Table') }}
+            CREATE OR REPLACE DYNAMIC TABLE {{ ref_no_link(locationName, nodeName) }}
+            	LAG = '{{ dtLagNumber }} {{ dtLagType }}'
+            	WAREHOUSE = {{config.whName}}
+            AS
+            	SELECT
+            	{%- for col in includeList %}
+            		{%- set colTransform = sources[0].columns | selectattr('name', 'equalto', col) | map(attribute='transform') | first %}
+            		{%- set colDesc = columns | selectattr('name', 'equalto', col) | map(attribute='description') | first %}
+            		{%- if colTransform == "" %}
+            		{%- set colVal = '"' + col + '"' %}
+            		{%- else %}
+            		{%- set colVal = colTransform %}
+            		{%- endif %}
+            		{%- if not config.trackChanges %}
+            		{{ colVal }} as "{{ col }}"
+            		{%- elif not config.nonDelete %}
+            		{{ colVal }} as "{{ col }}"                
+            		{%- else %}
+            		CASE 
+            			WHEN "{{ dmlColumn }}" = '{{dmlValue}}' 
+            			THEN lag({{colVal}}) over 
+            				(partition by {{ keyColumns }} order by "{{ timeColumn }}" asc) 
+            			ELSE {{colVal}} 
+            		END as "{{ col }}"
+            		{%- endif %}{%- if not loop.last -%}, {% endif %}
+            	{%- endfor %}
+            	{%- if config.trackChanges %}
+            		{%- if config.nonDelete %}
+            		, "{{ dmlColumn }}" as "{{ dmlColumn }}"
+            		{%- endif %}
+            		{%- if config.isOnlyCurrent %}
+            		, "{{ timeColumn }}" as {{ timeColumn }}
+            		{%- elif config.trackChanges %}
+            		, "{{ timeColumn }}" as "START_TIME"
+            		{%- endif %}
+            		{%- if not config.isOnlyCurrent %}
+            		, ifnull(
+            			timestampadd(
+            				'millisecond',-1,lag("{{ timeColumn }}") over 
+            					(partition by {{ keyColumns }} 
+            					order by "{{ timeColumn }}" desc)
+            			),
+            			to_timestamp('9999-12-31 23:59:59.999')
+            		) as "END_TIME"
+            		{%- endif %}
+            		, CASE 
+            			WHEN (row_number() over 
+            					(partition by {{ keyColumns }} 
+            						order by "{{ timeColumn }}" desc) = 1) 
+            			THEN TRUE 
+            			ELSE FALSE 
+            		END as "{{currentFlag}}"
+            	{%- endif %}
+            	{{ sources[0].join }}
+            	{%- if config.trackChanges and config.isOnlyCurrent == true  %}
+            		QUALIFY "{{currentFlag}}"
+            	{%- endif %}
+            	{%- endif %}
+        run:
+          templateString: |-
+            {% for test in node.tests if config.testsEnabled %}
+                {%- if test.runOrder == 'Before' %}
+                    {{ test_stage(test.name, test.continueOnFailure) }}
+                    {{ test.templateString }}
+                {%- endif %}
+            {%- endfor %}
+
+            {%- if config.preSQL %}
+                {{ stage('Pre-SQL') }}
+                {{ config.preSQL }}
+            {%- endif %}
+
+            {{- stage('Verify Dynamic Table') }}
+            SELECT COUNT(*)
+            FROM {{ ref_no_link(node.location.name, node.name) }};
+            {%- if config.postSQL %}
+                {{- stage('Post-SQL') }}
+                {{- config.postSQL }}
+            {%- endif %}
+
+            {%- if config.testsEnabled %}
+            	{%- for test in node.tests %}
+            		{%- if test.runOrder == 'After' %}
+            			{{- test_stage(test.name, test.continueOnFailure) }}
+            			{{- test.templateString }}
+                    {%- endif %}
+            	{%- endfor %}
+
+            	{%- for column in columns %}
+            		{%- for test in column.tests %}
+            			{{- test_stage(column.name + ": " + test.name) }}
+            			{{- test.templateString }}
+            		{%- endfor %}
+            	{%- endfor %}
+            {%- endif %}
+    name: Dynamic Table
+    version: 1
   StepType-2:
     id: "2"
     isDisabled: false
