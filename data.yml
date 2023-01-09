@@ -4,7 +4,10 @@ jobs: {}
 locations:
   SRC_TPCH:
     mappingDefinitions: {}
-macros: {}
+macros:
+  Macro-1:
+    id: "1"
+    macroString: test
 packages: {}
 projects:
   "1":
