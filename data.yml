@@ -11,7 +11,9 @@ macros:
           '"{{ storageLocations | selectattr('name', 'equalto', (sources[0].dependencies | map(attribute='node') | map(attribute='location') | map(attribute='name') | first)) | map(attribute='database') | first }}"."{{ storageLocations | selectattr('name', 'equalto', (sources[0].dependencies | map(attribute='node') | map(attribute='location') | map(attribute='name') | first)) | map(attribute='schema') | first }}"."{{sources[0].dependencies | map(attribute='node') | map(attribute='name') | first }}"'
       {%- endmacro -%}
 packages: {}
-projects: {}
+projects:
+  "1":
+    name: COALESCE-DATA_VAULT
 stepTypes:
   StepType-1:
     id: "1"
