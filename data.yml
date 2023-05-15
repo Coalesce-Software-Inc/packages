@@ -435,7 +435,7 @@ stepTypes:
                     )
 
             {% endif %}
-    name: Node Profilier
+    name: Node Profiler
     version: 1
   StepType-11:
     id: "11"
